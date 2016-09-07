@@ -4,38 +4,34 @@
 import locale
 import time
 import datetime as dt
-import ephem
 import pigpio
 import traceback
 
 TXGPIO=4 # 433.42 MHz emitter on GPIO 4
 
 #Button values
-boutonHaut = 0x2
-boutonStop = 0x1
-boutonBas = 0x4
+SOMFY_BUTTON_MY = 0x1
+SOMFY_BUTTON_UP = 0x2
+SOMFY_BUTTON_STOP = 0x1
+SOMFY_BUTTON_DOWN = 0x4
+SOMFY_BUTTON_PROG = 0x8
 
 frame = bytearray(7)
 
-homeLocation = ephem.Observer()
-homeLocation.lat, homeLocation.lon = '42.764457', '5.066435' #PUT YOUR DAMN COORDINATES (check on Google Maps for instance)
-locale.setlocale(locale.LC_TIME,'')
-
-
-def envoi_commande(telco, bouton): #Sending a frame
+def send_command(remote_name, button): #Sending a frame
    checksum = 0
-   
-   with open("somfy/" + telco + ".txt", 'r') as file:# the files are un a subfolder "somfy"
+
+   with open("somfy/" + remote_name + ".txt", 'r') as file:# the files are un a subfolder "somfy"
       data = file.readlines()
 
-   teleco = int(data[0], 16)
+   remote_address = int(data[0], 16)
    code = int(data[1])
    data[1] = str(code + 1)
 
-   print hex(teleco)
+   print hex(remote_address)
    print code
 
-   with open("somfy/" + telco + ".txt", 'w') as file:
+   with open("somfy/" + remote + ".txt", 'w') as file:
       file.writelines(data)
 
    pi = pigpio.pi() # connect to Pi
@@ -47,18 +43,18 @@ def envoi_commande(telco, bouton): #Sending a frame
    pi.set_mode(TXGPIO, pigpio.OUTPUT)
 
 
-   print "Remote  :      " + "0x%0.2X" % teleco
-   print "Button  :      " + "0x%0.2X" % bouton
+   print "Remote  :      " + "0x%0.2X" % remote_address
+   print "Button  :      " + "0x%0.2X" % button
    print "Rolling code : " + str(code)
    print ""
 
    frame[0] = 0xA7;       # Encryption key. Doesn't matter much
-   frame[1] = bouton << 4 # Which button did  you press? The 4 LSB will be the checksum
+   frame[1] = button << 4 # Which button did  you press? The 4 LSB will be the checksum
    frame[2] = code >> 8               # Rolling code (big endian)
    frame[3] = (code & 0xFF)           # Rolling code
-   frame[4] = teleco >> 16            # Remote address
-   frame[5] = ((teleco >>  8) & 0xFF) # Remote address
-   frame[6] = (teleco & 0xFF)         # Remote address
+   frame[4] = remote_address >> 16            # Remote address
+   frame[5] = ((remote_address >>  8) & 0xFF) # Remote address
+   frame[6] = (remote_address & 0xFF)         # Remote address
 
    print "Frame  :    ",
    for octet in frame:
@@ -147,83 +143,3 @@ def envoi_commande(telco, bouton): #Sending a frame
    pi.wave_delete(wid)
 
    pi.stop()
-   
-
-ancienJour = dt.datetime.now().day
-varChambreUP, varChambreDOWN, varCuiSdbUP, varScheyeDOWN, varSoirDOWN, varGeneralDOWN, varSS, varMatinUp = (0,)*8
-
-while 1:
-   if(ancienJour != dt.datetime.now().day):
-      varChambreUP, varChambreDOWN, varCuiSdbUP, varScheyeDOWN, varSoirDOWN, varGeneralDOWN, varSS, varMatinUp = (0,)*8
-   ancienJour = dt.datetime.now().day
-   
-   homeLocation.date = dt.datetime.now().strftime("%Y/%m/%d 00:00:00")
-   sunrise = ephem.localtime(homeLocation.next_rising(ephem.Sun()))
-   sunset = ephem.localtime(homeLocation.next_setting(ephem.Sun()))
-   print "Sunset :  " + str(sunset)
-
-   for i in range(1, 120):
-      if(dt.time(8, 00) < dt.datetime.now().time() < dt.time(8, 02)) and varChambreUP == 0:
-         print "Test Chambre"
-         try:
-            envoi_commande("chambre", boutonHaut)
-            time.sleep(4)
-            envoi_commande("chambre", boutonStop)
-            time.sleep(1)
-            varChambreUP = 1
-         except:
-            print "Impossible d'ouvrir chambre"
-            print traceback.format_exc()
-            time.sleep(15)
-
-      if(dt.time(8, 05) < dt.datetime.now().time() < dt.time(8, 07)) and varMatinUp == 0:
-         print "Cuisine UP"
-         try:
-            envoi_commande("cuisine", boutonHaut)
-            time.sleep(1)
-            envoi_commande("sdb", boutonHaut)
-            time.sleep(1)
-            envoi_commande("salon", boutonHaut)
-            time.sleep(1)
-            varMatinUp = 1
-         except:
-            print "Impossible d'ouvrir cuisine, salon & sdb"
-            print traceback.format_exc()
-            time.sleep(15)
-
-
-      if((sunset + dt.timedelta(minutes=45)) < (dt.datetime.now()) < (sunset + dt.timedelta(minutes=48))) and varSoirDOWN == 0:
-         print "Salon à " + str(dt.datetime.now().time())
-         try:
-            envoi_commande("salon", boutonBas)
-            time.sleep(1)
-            envoi_commande("ss", boutonBas)
-            time.sleep(1)
-            envoi_commande("chambre", boutonBas)
-            time.sleep(1)
-            varSoirDOWN = 1
-         except:
-            print "Impossible de fermer salon++"
-            print traceback.format_exc()
-            time.sleep(15)
-
-      if(dt.time(21, 00) < dt.datetime.now().time()) and (sunset + dt.timedelta(minutes=60)) < (dt.datetime.now()) and varGeneralDOWN == 0:
-         print "Fermeture générale à " + str(dt.datetime.now().time())
-         try:
-            envoi_commande("salon", boutonBas)
-            time.sleep(1)
-            envoi_commande("cuisine", boutonBas)
-            time.sleep(1)
-            envoi_commande("sdb", boutonBas)
-            time.sleep(1)
-            envoi_commande("chambre", boutonBas)
-            time.sleep(1)
-            envoi_commande("ss", boutonBas)
-            time.sleep(1)
-            varGeneralDOWN = 1
-         except:
-            print "Impossible de fermer le général"
-            print traceback.format_exc()
-            time.sleep(15)
-
-      time.sleep(30)
